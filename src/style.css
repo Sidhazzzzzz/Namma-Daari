@@ -1668,9 +1668,11 @@ body {
     overflow: hidden;
   }
 
-  /* Panel States */
+  /* Panel States - Fixed heights to prevent CLS */
   .sidebar.minimized {
     height: 70px;
+    min-height: 70px;
+    contain: layout style;
   }
 
   .sidebar.expanded {

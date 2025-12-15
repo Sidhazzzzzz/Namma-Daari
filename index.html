@@ -15,6 +15,9 @@
         href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap"
         rel="stylesheet">
 
+    <!-- Preload critical assets for LCP -->
+    <link rel="preload" href="logo.jpg" as="image" fetchpriority="high">
+
     <!-- MapLibre GL JS from CDN -->
     <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet">
     <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
@@ -93,7 +96,8 @@
 
             <div class="sidebar-content">
                 <div class="logo-section">
-                    <img src="logo.jpg" alt="NAMMದಾರಿ Logo" class="logo-icon">
+                    <img src="logo.jpg" alt="NAMMದಾರಿ Logo" class="logo-icon" loading="eager" fetchpriority="high"
+                        decoding="async">
                 </div>
 
 

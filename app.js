@@ -100,9 +100,16 @@ async function geocodeLocation(locationString, retries = 3) {
 }
 
 // ========================================
-// Autocomplete Service
+// Autocomplete Service (TomTom Search API)
 // ========================================
 let debounceTimer;
+let userLocation = { lat: 12.9716, lon: 77.5946 }; // Default to Bengaluru
+
+// Update user location when available (called from showUserLocation)
+function updateUserLocationForSearch(lat, lon) {
+    userLocation = { lat, lon };
+    console.log('Search location bias updated to:', userLocation);
+}
 
 /**
  * Fetch with timeout helper
@@ -131,44 +138,52 @@ async function fetchWithTimeout(url, options = {}, timeout = 5000) {
     }
 }
 
-async function fetchSuggestions(query, retries = 2) {
-    if (!query || query.length < 3) return [];
+/**
+ * Fetch suggestions from TomTom Search API (with fuzzy matching)
+ * @param {string} query - Search query
+ * @param {number} retries - Number of retries
+ * @returns {Promise<Array>} Array of suggestion objects
+ */
+async function fetchSuggestions(query, retries = 1) {
+    if (!query || query.length < 2) return []; // TomTom works with 2+ chars
 
     try {
         const params = new URLSearchParams({
-            q: query,
-            format: 'json',
-            limit: '5',
-            countrycodes: 'in',
-            addressdetails: '1',
+            query: query,
+            lat: userLocation.lat,
+            lon: userLocation.lon,
+            limit: '5'
         });
 
         const response = await fetchWithTimeout(
-            `${NOMINATIM_BASE_URL}/search?${params}`,
-            {
-                headers: {
-                    'User-Agent': 'SafeRouteFinderApp/1.0'
-                }
-            },
+            `/api/tomtom-search?${params}`,
+            {},
             5000 // 5 second timeout
         );
 
         if (!response.ok) {
-            // Retry on server errors
             if ((response.status >= 500 || response.status === 429) && retries > 0) {
-                console.warn(`Nominatim returned ${response.status}, retrying... (${retries} left)`);
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                console.warn(`TomTom Search returned ${response.status}, retrying...`);
+                await new Promise(resolve => setTimeout(resolve, 500));
                 return fetchSuggestions(query, retries - 1);
             }
+            console.error('TomTom Search error:', response.status);
             return [];
         }
-        return await response.json();
+
+        const data = await response.json();
+
+        // Transform to format expected by showSuggestions
+        return (data.results || []).map(result => ({
+            display_name: result.display_name,
+            lat: result.lat,
+            lon: result.lon
+        }));
     } catch (error) {
         console.error('Autocomplete error:', error);
-        // Retry on network errors
         if (retries > 0 && (error.message === 'Request timed out' || error.name === 'TypeError')) {
-            console.warn(`Autocomplete failed, retrying... (${retries} left)`);
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            console.warn('Autocomplete failed, retrying...');
+            await new Promise(resolve => setTimeout(resolve, 500));
             return fetchSuggestions(query, retries - 1);
         }
         return [];
@@ -304,45 +319,56 @@ function setupAutocomplete(inputId) {
         delete this.dataset.lat;
         delete this.dataset.lon;
         const query = this.value;
+        const inputElement = this;
 
-        // Remove existing dropdown entirely if query is empty
-        let list = this.nextElementSibling;
-        if (list && list.classList.contains('autocomplete-items')) {
-            list.remove();
-        }
+        // Defer DOM removal to next frame to avoid blocking INP
+        requestAnimationFrame(() => {
+            let list = inputElement.nextElementSibling;
+            if (list && list.classList.contains('autocomplete-items')) {
+                list.remove();
+            }
+        });
 
         if (!query) return;
 
         debounceTimer = setTimeout(async () => {
             const suggestions = await fetchSuggestions(query);
-            showSuggestions(suggestions, this);
+            showSuggestions(suggestions, inputElement);
         }, 300);
     });
 
-    // Zoom to location when user leaves input field
+    // Zoom to location when user leaves input field - debounced to avoid blocking
+    let blurTimeout;
     input.addEventListener('blur', function () {
         const lat = parseFloat(this.dataset.lat);
         const lon = parseFloat(this.dataset.lon);
 
-        if (!isNaN(lat) && !isNaN(lon) && map) {
-            map.flyTo({
-                center: [lon, lat],
-                zoom: 14,
-                duration: 1500,
-                padding: { left: 420 } // Account for sidebar
-            });
-        }
+        // Defer map animation to avoid blocking INP
+        clearTimeout(blurTimeout);
+        blurTimeout = setTimeout(() => {
+            if (!isNaN(lat) && !isNaN(lon) && map) {
+                map.flyTo({
+                    center: [lon, lat],
+                    zoom: 14,
+                    duration: 1500,
+                    padding: { left: 420 } // Account for sidebar
+                });
+            }
+        }, 100);
     });
 
-    // Close dropdown when clicking outside
+    // Close dropdown when clicking outside - use passive listener
     document.addEventListener('click', function (e) {
         if (e.target !== input) {
-            let list = input.nextElementSibling;
-            if (list && list.classList.contains('autocomplete-items')) {
-                list.remove(); // Remove dropdown entirely from DOM
-            }
+            // Defer DOM removal to next frame
+            requestAnimationFrame(() => {
+                let list = input.nextElementSibling;
+                if (list && list.classList.contains('autocomplete-items')) {
+                    list.remove();
+                }
+            });
         }
-    });
+    }, { passive: true });
 }
 
 // ========================================
@@ -479,7 +505,9 @@ function showUserLocation() {
             const { latitude, longitude, accuracy } = position.coords;
             console.log(`Location found: ${latitude}, ${longitude} (Accuracy: ${accuracy}m)`);
 
-            // Create the HTML element for the marker
+            // Update search location bias for autocomplete
+            updateUserLocationForSearch(latitude, longitude);
+
             // Create the HTML element for the marker
             const el = document.createElement('div');
             el.className = 'user-location-container';
@@ -1251,10 +1279,7 @@ function toggleAccidents() {
     const isVisible = btn.getAttribute('data-visible') === 'true';
     const newVisibility = !isVisible;
 
-    accidentMarkers.forEach(item => {
-        item.element.style.display = newVisibility ? 'flex' : 'none';
-    });
-
+    // Update button state immediately for responsiveness
     btn.setAttribute('data-visible', newVisibility);
     const label = btn.querySelector('.btn-label');
 
@@ -1265,6 +1290,13 @@ function toggleAccidents() {
         btn.classList.remove('active');
         if (label) label.textContent = 'Accident Zones';
     }
+
+    // Defer heavy marker updates to next frame to avoid blocking INP
+    requestAnimationFrame(() => {
+        accidentMarkers.forEach(item => {
+            item.element.style.display = newVisibility ? 'flex' : 'none';
+        });
+    });
 }
 
 
@@ -2031,7 +2063,10 @@ function initMobileSearchPanel() {
     // Sync mobile inputs with main inputs and trigger geocoding on Enter
     if (mobileStartInput) {
         mobileStartInput.addEventListener('input', () => {
-            if (mainStartInput) mainStartInput.value = mobileStartInput.value;
+            // Defer sync to avoid blocking INP
+            requestAnimationFrame(() => {
+                if (mainStartInput) mainStartInput.value = mobileStartInput.value;
+            });
         });
 
         mobileStartInput.addEventListener('keypress', (e) => {
@@ -2043,7 +2078,10 @@ function initMobileSearchPanel() {
 
     if (mobileEndInput) {
         mobileEndInput.addEventListener('input', () => {
-            if (mainEndInput) mainEndInput.value = mobileEndInput.value;
+            // Defer sync to avoid blocking INP
+            requestAnimationFrame(() => {
+                if (mainEndInput) mainEndInput.value = mobileEndInput.value;
+            });
         });
 
         mobileEndInput.addEventListener('keypress', (e) => {

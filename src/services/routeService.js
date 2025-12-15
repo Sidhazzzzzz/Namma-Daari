@@ -135,7 +135,7 @@ async function fetchFromTomTom(start, end) {
     // TomTom Calculate Route API via proxy (API key added server-side)
     // Format: /calculateRoute/{locations}/json
     const locations = `${start.lat},${start.lon}:${end.lat},${end.lon}`;
-    const url = `/api/tomtom-routing/calculateRoute/${locations}/json?maxAlternatives=2&routeType=fastest&traffic=true&travelMode=car`;
+    const url = `/api/tomtom-routing/calculateRoute/${locations}/json?maxAlternatives=1&routeType=fastest&traffic=true&travelMode=car`;
 
     try {
         const response = await fetchWithRetry(url);
